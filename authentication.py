@@ -240,45 +240,46 @@ def main():
     #print("Got one")
 
     while True:
-        c, addr = s.accept()
-        while True:
-            #c, addr = s.accept()
-            #print("Got one")
-            lengthInBytes = recv_all(c, 2)
-            if len(lengthInBytes) == 0:
-                break
-            print(lengthInBytes)
-            length = struct.unpack("!H", lengthInBytes)[0]
-            msg = recv_all(c, length)
-            #print(msg)
-            read = nstp_v3_pb2.NSTPMessage()
-            read.ParseFromString(msg)
-            print(read)
+        try:
+            c, addr = s.accept()
+            while True:
+                #c, addr = s.accept()
+                #print("Got one")
+                lengthInBytes = recv_all(c, 2)
+                if len(lengthInBytes) == 0:
+                    break
+                print(lengthInBytes)
+                length = struct.unpack("!H", lengthInBytes)[0]
+                msg = recv_all(c, length)
+                #print(msg)
+                read = nstp_v3_pb2.NSTPMessage()
+                read.ParseFromString(msg)
+                print(read)
 
-            if read.HasField("client_hello"):
-                clientPublicKey = read.client_hello.public_key
-                response = sendServerHello(read)
-                keys = nacl.bindings.crypto_kx_server_session_keys(serverPublicKey.encode(), 
-                    serverSecretKey.encode(), clientPublicKey)
+                if read.HasField("client_hello"):
+                    clientPublicKey = read.client_hello.public_key
+                    response = sendServerHello(read)
+                    keys = nacl.bindings.crypto_kx_server_session_keys(serverPublicKey.encode(), 
+                        serverSecretKey.encode(), clientPublicKey)
 
-            elif read.HasField("encrypted_message"):
-                decryptedMsg = decryptMessage(read, keys)
-                #TODO switch here to decide what to do
-                # TODO limit the number of tries
-                plaintextResponse = messageType(decryptedMsg)
-                print("PLAINTEXT RESPONSE\n", plaintextResponse)
-                if plaintextResponse.HasField("error_message"):
-                    response = plaintextResponse
-                else:
-                    response = encryptMessage(plaintextResponse, keys)
-               
-            #print(response)
-            sentMsg = response.SerializeToString()
-            sentLen = struct.pack("!H", len(sentMsg))
-            c.sendall(sentLen + sentMsg)    
+                elif read.HasField("encrypted_message"):
+                    decryptedMsg = decryptMessage(read, keys)
+                    #TODO switch here to decide what to do
+                    # TODO limit the number of tries
+                    plaintextResponse = messageType(decryptedMsg)
+                    print("PLAINTEXT RESPONSE\n", plaintextResponse)
+                    if plaintextResponse.HasField("error_message"):
+                        response = plaintextResponse
+                    else:
+                        response = encryptMessage(plaintextResponse, keys)
 
-        #except socket.timeout:
-            #break
+                #print(response)
+                sentMsg = response.SerializeToString()
+                sentLen = struct.pack("!H", len(sentMsg))
+                c.sendall(sentLen + sentMsg)    
+
+        except socket.timeout:
+            break
     s.close()
     return 0
 
