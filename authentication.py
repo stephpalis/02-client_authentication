@@ -15,6 +15,7 @@ serverPublicKey = b''
 serverSecretKey = b''
 keys = []
 user = ""
+authenticated = False
 
 database = sys.argv[1]
 usersToPasswords = {}
@@ -96,13 +97,16 @@ def comparePasswords(password, stored):
 
 def authorization_request(msg):
     global user
+    global authenticated
     username = msg.auth_request.username
     password = msg.auth_request.password
 
     print(username)
     print(password)
 
-    if username not in usersToPasswords.keys():
+    if authenticated:
+        return error_message("A user has already been authenticated")
+    elif username not in usersToPasswords.keys():
         return authentication_response(False)
     else:
         # TODO add logic to figure out if hashes match
@@ -110,6 +114,7 @@ def authorization_request(msg):
         result = comparePasswords(password, storedPassword)
         if result:
             user = username
+            authenticated = True
         return authentication_response(result)
 
 def store_response(hashedValue):
@@ -170,6 +175,7 @@ def ping_response(data):
     return response
 
 def ping_request(msg):
+    # TODO check if it should be == 0 or == IDENTITY
     data = msg.ping_request.data
     hashAlg = msg.ping_request.hash_algorithm
 
@@ -190,6 +196,7 @@ def ping_request(msg):
 
 # TODO - add functionality
 def messageType(msg):
+    #TODO should only be able to send one auth_request
     if msg.HasField("auth_request"):
         return authorization_request(msg)
     #TODO i don't think this is needed
@@ -229,11 +236,12 @@ def main():
     print(serverSecretKey)
     serverPublicKey = serverSecretKey.public_key
     print(serverPublicKey)
-    c, addr = s.accept()
-    print("Got one")
+    #c, addr = s.accept()
+    #print("Got one")
 
     while True:
-        try:
+        c, addr = s.accept()
+        while True:
             #c, addr = s.accept()
             #print("Got one")
             lengthInBytes = recv_all(c, 2)
@@ -269,8 +277,8 @@ def main():
             sentLen = struct.pack("!H", len(sentMsg))
             c.sendall(sentLen + sentMsg)    
 
-        except socket.timeout:
-            break
+        #except socket.timeout:
+            #break
     s.close()
     return 0
 
