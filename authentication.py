@@ -11,6 +11,7 @@ import hashlib
 from passlib.hash import md5_crypt, sha256_crypt, sha512_crypt, argon2
 import threading
 
+
 clientPublicKey = b''
 serverPublicKey = b''
 serverSecretKey = b''
@@ -23,6 +24,7 @@ database = sys.argv[1]
 usersToPasswords = {}
 publicKeyValue = {}
 privateKeyValue = {}
+lock = threading.Lock()
 
 
 def readDatabase():
@@ -42,6 +44,8 @@ def error_message(reason):
 
 def sendServerHello(msg):
     global serverPublicKey
+    if msg.client_hello.major_version != 3:
+        return error_message("Wrong version")
     response = nstp_v3_pb2.NSTPMessage()
     response.server_hello.major_version = 3
     response.server_hello.minor_version = 1
@@ -54,19 +58,15 @@ def decryptMessage(msg, keys):
     global clientPublicKey
     ciphertext = msg.encrypted_message.ciphertext
     nonce = msg.encrypted_message.nonce
-    #print("CIPHER ", type(ciphertext))
-    #print("NONCE: ", type(nonce))
-    
-    #print("Later secret key ", type(serverSecretKey))
-    #print("Later public key ", len(clientPublicKey))
-    #box = Box(serverSecretKey, PublicKey(clientPublicKey))
-    #plaintext = box.decrypt(ciphertext, nonce)
-    #keys = nacl.bindings.crypto_kx_server_session_keys(serverPublicKey.encode(), serverSecretKey.encode(), clientPublicKey)
-    plaintextBytes = nacl.bindings.crypto_secretbox_open(ciphertext, nonce, keys[0])
-    decrypted = nstp_v3_pb2.DecryptedMessage()
-    decrypted.ParseFromString(plaintextBytes)
-    print("DECRYPTED MESSAGE\n", decrypted)
-    return decrypted
+    try:
+        plaintextBytes = nacl.bindings.crypto_secretbox_open(ciphertext, nonce, keys[0])
+        decrypted = nstp_v3_pb2.DecryptedMessage()
+        decrypted.ParseFromString(plaintextBytes)
+        print("DECRYPTED MESSAGE\n", decrypted)
+        return decrypted
+    except nacl.exceptions.CryptoError:
+        print("Bad key")
+        return error_message("Failed to decrypt given message")
 
 def encryptMessage(msg, keys):
     nonce = nacl.utils.random(24)
@@ -132,6 +132,7 @@ def store_request(msg):
     value = msg.store_request.value
     public = msg.store_request.public
     
+    lock.acquire()
     if public:
         publicKeyValue[key] = value
     else:
@@ -141,6 +142,7 @@ def store_request(msg):
         else:
             privateKeyValue[user] = {}
             privateKeyValue[user][key] = value
+    lock.release()
 
     hashedValue = value
     return store_response(hashedValue)
@@ -158,6 +160,7 @@ def load_request(msg):
     public = msg.load_request.public
     value = b''
 
+    lock.acquire()
     if public:
         if key in publicKeyValue.keys():
             value = publicKeyValue[key]
@@ -166,7 +169,7 @@ def load_request(msg):
         if user in privateKeyValue.keys():
             if privateKeyValue[user].get(key) != None:
                 value = privateKeyValue[user][key]
-
+    lock.release()
     return load_response(value)
 
 def ping_response(data):
@@ -219,9 +222,45 @@ def connection_thread(c, addr):
     global clientPublicKey
     global tries
     print("REMOTE: ", addr[0])
+    
+    lengthInBytes = recv_all(c, 2)
+    if len(lengthInBytes) == 0:
+        c.close()
+    print(lengthInBytes)
+    length = struct.unpack("!H", lengthInBytes)[0]
+    msg = recv_all(c, length)
+    #print(msg)
+    read = nstp_v3_pb2.NSTPMessage()
+    read.ParseFromString(msg)
+    print(read)
+    end = False
+
+    if read.HasField("client_hello"):
+        clientPublicKey = read.client_hello.public_key
+        #print("client public key ", clientPublicKey)
+        if clientPublicKey == b'':
+            response = error_message("Must include a public_key")
+            sentMsg = response.SerializeToString()
+            sentLen = struct.pack("!H", len(sentMsg))
+            c.sendall(sentLen + sentMsg)
+            c.close()
+            return 0
+        response = sendServerHello(read)
+        keys = nacl.bindings.crypto_kx_server_session_keys(serverPublicKey.encode(),
+            serverSecretKey.encode(), clientPublicKey)
+    else:
+        # TODO this needs to be tested
+        response = error_message("Must send a client hello first")
+        end = True
+
+    sentMsg = response.SerializeToString()
+    sentLen = struct.pack("!H", len(sentMsg))
+    c.sendall(sentLen + sentMsg)
+    if end:
+        c.close()
+        return 0
+
     while True:
-        #c, addr = s.accept()
-        #print("Got one")
         lengthInBytes = recv_all(c, 2)
         if len(lengthInBytes) == 0:
             break
@@ -233,20 +272,24 @@ def connection_thread(c, addr):
         read.ParseFromString(msg)
         print(read)
 
-        if read.HasField("client_hello"):
+        '''if read.HasField("client_hello"):
             clientPublicKey = read.client_hello.public_key
             response = sendServerHello(read)
             keys = nacl.bindings.crypto_kx_server_session_keys(serverPublicKey.encode(), 
-                serverSecretKey.encode(), clientPublicKey)
+                serverSecretKey.encode(), clientPublicKey)'''
         
+        plaintextResponse = ""
         # TODO make sure send a client_hello before this
-        elif read.HasField("encrypted_message"):
+        if read.HasField("encrypted_message"):
             decryptedMsg = decryptMessage(read, keys)
-            if decryptedMsg.HasField("auth_request"):
+            if decryptedMsg.HasField("error_message"):
+                plaintextResponse = decryptedMsg
+            elif decryptedMsg.HasField("auth_request"):
                 tries += 1
                 if tries > 10:
                     print("ERROR")
                     plaintextResponse = error_message("Too many tries.")
+                    print(plaintextResponse)
                 else:
                     plaintextResponse = messageType(decryptedMsg)
                     print("PLAINTEXT RESPONSE\n", plaintextResponse)
@@ -255,12 +298,16 @@ def connection_thread(c, addr):
                 plaintextResponse = messageType(decryptedMsg)
             # TODO encrypted or unencrypted?
             response = encryptMessage(plaintextResponse, keys)
+        else:
+            print("wrong message type set")
+            plaintextResponse = error_message("Wrong message type sent")
+            response = encryptMessage(plaintextResponse, keys)
 
         print("continue worked properly")
         sentMsg = response.SerializeToString()
         sentLen = struct.pack("!H", len(sentMsg))
         c.sendall(sentLen + sentMsg)    
-        if response.HasField("error_message"):
+        if plaintextResponse.HasField("error_message"):
             print("Connection with client has been closed")
             tries = 0
             break
@@ -273,7 +320,6 @@ def main():
     global clientPublicKey
     global tries
     print("RUNNING")
-    print(database)
     readDatabase()
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     port = 22300
@@ -283,17 +329,14 @@ def main():
     s.settimeout(10)
     
     serverSecretKey = PrivateKey.generate()
-    print(serverSecretKey)
     serverPublicKey = serverSecretKey.public_key
-    print(serverPublicKey)
 
     while True:
         try:
             c, addr = s.accept()
+            print("Spawning thread")
             t = threading.Thread(target=connection_thread, args=(c, addr))
             t.start()
-            print("Spawning thread")
-
         except socket.timeout:
             break
     s.close()
