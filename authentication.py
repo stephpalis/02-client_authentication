@@ -270,7 +270,7 @@ def connection_thread(c, addr):
         #print(msg)
         read = nstp_v3_pb2.NSTPMessage()
         read.ParseFromString(msg)
-        print(read)
+        print("READ", read)
 
         '''if read.HasField("client_hello"):
             clientPublicKey = read.client_hello.public_key
@@ -279,12 +279,12 @@ def connection_thread(c, addr):
                 serverSecretKey.encode(), clientPublicKey)'''
         
         plaintextResponse = ""
-        # TODO make sure send a client_hello before this
         if read.HasField("encrypted_message"):
             decryptedMsg = decryptMessage(read, keys)
             if decryptedMsg.HasField("error_message"):
                 plaintextResponse = decryptedMsg
             elif decryptedMsg.HasField("auth_request"):
+                # TODO should this be based off of IP addresses
                 tries += 1
                 if tries > 10:
                     print("ERROR")
