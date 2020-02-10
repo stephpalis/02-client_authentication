@@ -16,6 +16,7 @@ serverSecretKey = b''
 keys = []
 user = ""
 authenticated = False
+tries = 0
 
 database = sys.argv[1]
 usersToPasswords = {}
@@ -109,7 +110,6 @@ def authorization_request(msg):
     elif username not in usersToPasswords.keys():
         return authentication_response(False)
     else:
-        # TODO add logic to figure out if hashes match
         storedPassword = usersToPasswords[username]
         result = comparePasswords(password, storedPassword)
         if result:
@@ -123,7 +123,6 @@ def store_response(hashedValue):
     response.store_response.hash_algorithm = 0
     return response
 
-#TODO needs to be finished
 def store_request(msg):
     global publicKeyValue
     global privateKeyValue
@@ -194,14 +193,9 @@ def ping_request(msg):
 
     return ping_response(hashed)
 
-# TODO - add functionality
 def messageType(msg):
-    #TODO should only be able to send one auth_request
     if msg.HasField("auth_request"):
         return authorization_request(msg)
-    #TODO i don't think this is needed
-    elif msg.HasField("error_message"):
-        pass
     elif msg.HasField("ping_request"):
         return ping_request(msg)
     elif msg.HasField("load_request"):
@@ -222,6 +216,7 @@ def main():
     global serverPublicKey
     global serverSecretKey
     global clientPublicKey
+    global tries
     print("RUNNING")
     print(database)
     readDatabase()
@@ -242,6 +237,11 @@ def main():
     while True:
         try:
             c, addr = s.accept()
+            t = threading.Thread(target=connection_thread, args=(c, addr))
+            t.start()
+
+
+            print("REMOTE: ", addr[0])
             while True:
                 #c, addr = s.accept()
                 #print("Got one")
@@ -261,23 +261,32 @@ def main():
                     response = sendServerHello(read)
                     keys = nacl.bindings.crypto_kx_server_session_keys(serverPublicKey.encode(), 
                         serverSecretKey.encode(), clientPublicKey)
-
+                
+                # TODO make sure send a client_hello before this
                 elif read.HasField("encrypted_message"):
                     decryptedMsg = decryptMessage(read, keys)
-                    #TODO switch here to decide what to do
-                    # TODO limit the number of tries
-                    plaintextResponse = messageType(decryptedMsg)
-                    print("PLAINTEXT RESPONSE\n", plaintextResponse)
-                    if plaintextResponse.HasField("error_message"):
-                        response = plaintextResponse
+                    if decryptedMsg.HasField("auth_request"):
+                        tries += 1
+                        if tries > 10:
+                            print("ERROR")
+                            plaintextResponse = error_message("Too many tries.")
+                        else:
+                            plaintextResponse = messageType(decryptedMsg)
+                            print("PLAINTEXT RESPONSE\n", plaintextResponse)
                     else:
-                        response = encryptMessage(plaintextResponse, keys)
+                        print("PLAINTEXT RESPONSE\n", plaintextResponse)
+                        plaintextResponse = messageType(decryptedMsg)
+                    # TODO encrypted or unencrypted?
+                    response = encryptMessage(plaintextResponse, keys)
 
-                #print(response)
+                print("continue worked properly")
                 sentMsg = response.SerializeToString()
                 sentLen = struct.pack("!H", len(sentMsg))
                 c.sendall(sentLen + sentMsg)    
-
+                if response.HasField("error_message"):
+                    print("Connection with client has been closed")
+                    c.close()
+                    tries = 0
         except socket.timeout:
             break
     s.close()
