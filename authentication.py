@@ -9,6 +9,7 @@ import nacl.secret
 import sys
 import hashlib
 from passlib.hash import md5_crypt, sha256_crypt, sha512_crypt, argon2
+import threading
 
 clientPublicKey = b''
 serverPublicKey = b''
@@ -212,6 +213,60 @@ def recv_all(s,n):
         xs += x
     return xs
 
+def connection_thread(c, addr):
+    global serverPublicKey
+    global serverSecretKey
+    global clientPublicKey
+    global tries
+    print("REMOTE: ", addr[0])
+    while True:
+        #c, addr = s.accept()
+        #print("Got one")
+        lengthInBytes = recv_all(c, 2)
+        if len(lengthInBytes) == 0:
+            break
+        print(lengthInBytes)
+        length = struct.unpack("!H", lengthInBytes)[0]
+        msg = recv_all(c, length)
+        #print(msg)
+        read = nstp_v3_pb2.NSTPMessage()
+        read.ParseFromString(msg)
+        print(read)
+
+        if read.HasField("client_hello"):
+            clientPublicKey = read.client_hello.public_key
+            response = sendServerHello(read)
+            keys = nacl.bindings.crypto_kx_server_session_keys(serverPublicKey.encode(), 
+                serverSecretKey.encode(), clientPublicKey)
+        
+        # TODO make sure send a client_hello before this
+        elif read.HasField("encrypted_message"):
+            decryptedMsg = decryptMessage(read, keys)
+            if decryptedMsg.HasField("auth_request"):
+                tries += 1
+                if tries > 10:
+                    print("ERROR")
+                    plaintextResponse = error_message("Too many tries.")
+                else:
+                    plaintextResponse = messageType(decryptedMsg)
+                    print("PLAINTEXT RESPONSE\n", plaintextResponse)
+            else:
+                print("PLAINTEXT RESPONSE\n", plaintextResponse)
+                plaintextResponse = messageType(decryptedMsg)
+            # TODO encrypted or unencrypted?
+            response = encryptMessage(plaintextResponse, keys)
+
+        print("continue worked properly")
+        sentMsg = response.SerializeToString()
+        sentLen = struct.pack("!H", len(sentMsg))
+        c.sendall(sentLen + sentMsg)    
+        if response.HasField("error_message"):
+            print("Connection with client has been closed")
+            tries = 0
+            break
+    c.close()
+    return 0
+
 def main():
     global serverPublicKey
     global serverSecretKey
@@ -231,62 +286,14 @@ def main():
     print(serverSecretKey)
     serverPublicKey = serverSecretKey.public_key
     print(serverPublicKey)
-    #c, addr = s.accept()
-    #print("Got one")
 
     while True:
         try:
             c, addr = s.accept()
             t = threading.Thread(target=connection_thread, args=(c, addr))
             t.start()
+            print("Spawning thread")
 
-
-            print("REMOTE: ", addr[0])
-            while True:
-                #c, addr = s.accept()
-                #print("Got one")
-                lengthInBytes = recv_all(c, 2)
-                if len(lengthInBytes) == 0:
-                    break
-                print(lengthInBytes)
-                length = struct.unpack("!H", lengthInBytes)[0]
-                msg = recv_all(c, length)
-                #print(msg)
-                read = nstp_v3_pb2.NSTPMessage()
-                read.ParseFromString(msg)
-                print(read)
-
-                if read.HasField("client_hello"):
-                    clientPublicKey = read.client_hello.public_key
-                    response = sendServerHello(read)
-                    keys = nacl.bindings.crypto_kx_server_session_keys(serverPublicKey.encode(), 
-                        serverSecretKey.encode(), clientPublicKey)
-                
-                # TODO make sure send a client_hello before this
-                elif read.HasField("encrypted_message"):
-                    decryptedMsg = decryptMessage(read, keys)
-                    if decryptedMsg.HasField("auth_request"):
-                        tries += 1
-                        if tries > 10:
-                            print("ERROR")
-                            plaintextResponse = error_message("Too many tries.")
-                        else:
-                            plaintextResponse = messageType(decryptedMsg)
-                            print("PLAINTEXT RESPONSE\n", plaintextResponse)
-                    else:
-                        print("PLAINTEXT RESPONSE\n", plaintextResponse)
-                        plaintextResponse = messageType(decryptedMsg)
-                    # TODO encrypted or unencrypted?
-                    response = encryptMessage(plaintextResponse, keys)
-
-                print("continue worked properly")
-                sentMsg = response.SerializeToString()
-                sentLen = struct.pack("!H", len(sentMsg))
-                c.sendall(sentLen + sentMsg)    
-                if response.HasField("error_message"):
-                    print("Connection with client has been closed")
-                    c.close()
-                    tries = 0
         except socket.timeout:
             break
     s.close()
