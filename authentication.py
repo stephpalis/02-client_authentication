@@ -213,6 +213,7 @@ def connection_thread(c, addr):
     lengthInBytes = recv_all(c, 2)
     if len(lengthInBytes) == 0:
         c.close()
+        return 0
     length = struct.unpack("!H", lengthInBytes)[0]
     msg = recv_all(c, length)
     read = nstp_v3_pb2.NSTPMessage()
@@ -291,6 +292,7 @@ def connection_thread(c, addr):
             print("Connection with client has been closed")
             break
     c.close()
+    print("returning out of thread")
     return 0
 
 def main():
@@ -310,6 +312,7 @@ def main():
 
     while True:
         try:
+            print("waiting")
             c, addr = s.accept()
             print("Spawning thread")
             t = threading.Thread(target=connection_thread, args=(c, addr))
