@@ -78,16 +78,20 @@ def comparePasswords(password, stored):
     hashAlg = stored[1:].split("$")[0]
     if hashAlg == "1":
         #MD5
+        print("MD5")
         return md5_crypt.verify(password, stored)
     elif hashAlg == "5":
         #SHA256
+        print("SHA256")
         return sha256_crypt.verify(password, stored)
     elif hashAlg == "6":
         #SHA512
+        print("SHA512")
         return sha512_crypt.verify(password, stored)
     elif hashAlg == "argon2id":
         #Argon
         # TODO check
+        print("ARGON")
         return argon2.verify(password, stored)
 
 def authorization_request(msg, authenticated):
@@ -98,7 +102,7 @@ def authorization_request(msg, authenticated):
     print(password)
 
     if authenticated:
-        return error_message("A user has already been authenticated")
+        return error_message("A user has already been authenticated"), username, authenticated
     elif username not in usersToPasswords.keys():
         return authentication_response(False, username, False)
     else:
@@ -166,18 +170,20 @@ def ping_response(data):
     return response
 
 def ping_request(msg):
-    # TODO check if it should be == 0 or == IDENTITY
     data = msg.ping_request.data
     hashAlg = msg.ping_request.hash_algorithm
 
     if hashAlg == 0:
         # IDENTITY
+        print("Identity")
         hashed = data
     elif hashAlg == 1:
         # SHA256
+        print("SHA256")
         hashed = hashlib.sha256(data).digest()
     elif hashAlg == 2:
         # SHA512
+        print("SHA512")
         hashed = hashlib.sha512(data).digest()
     else:
         # wrong hash
@@ -238,7 +244,6 @@ def connection_thread(c, addr):
         keys = nacl.bindings.crypto_kx_server_session_keys(serverPublicKey.encode(),
             serverSecretKey.encode(), clientPublicKey)
     else:
-        # TODO this needs to be tested
         response = error_message("Must send a client hello first")
         end = True
 
@@ -278,6 +283,7 @@ def connection_thread(c, addr):
             else:
                 plaintextResponse, user, authenticated = messageType(decryptedMsg, authenticated, user)
             print("PLAINTEXT RESPONSE\n", plaintextResponse)
+            print("AUTHENTICATED\n", authenticated, "  ", user)
             # TODO encrypted or unencrypted?
             response = encryptMessage(plaintextResponse, keys)
         else:
