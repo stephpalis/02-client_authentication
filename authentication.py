@@ -10,7 +10,7 @@ import sys
 import hashlib
 from passlib.hash import md5_crypt, sha256_crypt, sha512_crypt, argon2
 import threading
-
+import time
 
 serverPublicKey = b''
 serverSecretKey = b''
@@ -20,7 +20,7 @@ usersToPasswords = {}
 publicKeyValue = {}
 privateKeyValue = {}
 lock = threading.Lock()
-
+IPtoConnections = {}
 
 def readDatabase():
     global usersToPasswords
@@ -90,7 +90,6 @@ def comparePasswords(password, stored):
         return sha512_crypt.verify(password, stored)
     elif hashAlg == "argon2id":
         #Argon
-        # TODO check
         print("ARGON")
         return argon2.verify(password, stored)
 
@@ -188,7 +187,6 @@ def ping_request(msg):
     else:
         # wrong hash
         return error_message("Invalid hash algorithm")
-
     return ping_response(hashed)
 
 def messageType(msg, authenticated, user):
@@ -213,12 +211,17 @@ def recv_all(s,n):
 def connection_thread(c, addr):
     global serverPublicKey
     global serverSecretKey
+    global IPtoConnections
     print("REMOTE: ", addr[0])
     
+    remote = addr[0]
     clientPublicKey = b''
     lengthInBytes = recv_all(c, 2)
     if len(lengthInBytes) == 0:
         c.close()
+        lock.acquire()
+        IPtoConnections[remote] -= 1
+        lock.release()
         return 0
     length = struct.unpack("!H", lengthInBytes)[0]
     msg = recv_all(c, length)
@@ -232,17 +235,23 @@ def connection_thread(c, addr):
 
     if read.HasField("client_hello"):
         clientPublicKey = read.client_hello.public_key
-        #print("client public key ", clientPublicKey)
         if clientPublicKey == b'':
             response = error_message("Must include a public_key")
             sentMsg = response.SerializeToString()
             sentLen = struct.pack("!H", len(sentMsg))
             c.sendall(sentLen + sentMsg)
+            lock.acquire()
+            IPtoConnections[remote] -= 1
+            lock.release()
             c.close()
             return 0
         response = sendServerHello(read)
-        keys = nacl.bindings.crypto_kx_server_session_keys(serverPublicKey.encode(),
-            serverSecretKey.encode(), clientPublicKey)
+        try:
+            keys = nacl.bindings.crypto_kx_server_session_keys(serverPublicKey.encode(),
+                serverSecretKey.encode(), clientPublicKey)
+        except nacl.exceptions.CryptoError:
+            response = error_message("Session Key failure")
+            end = True
     else:
         response = error_message("Must send a client hello first")
         end = True
@@ -251,6 +260,9 @@ def connection_thread(c, addr):
     sentLen = struct.pack("!H", len(sentMsg))
     c.sendall(sentLen + sentMsg)
     if end:
+        lock.acquire()
+        IPtoConnections[remote] -= 1
+        lock.release()
         c.close()
         return 0
 
@@ -272,12 +284,18 @@ def connection_thread(c, addr):
             if decryptedMsg.HasField("error_message"):
                 plaintextResponse = decryptedMsg
             elif decryptedMsg.HasField("auth_request"):
-                # TODO should this be based off of IP addresses
                 # TODO should this be cleared?
+                #TODO upper bound limit
+                lock.acquire()
+                openConnections = IPtoConnections[remote]
+                lock.release()
                 attempts += 1
-                if attempts > 10:
-                    print("ERROR")
-                    plaintextResponse = error_message("Too many attempts.")
+                if attempts > 5:
+                    sleepTime = openConnections
+                    time.sleep(sleepTime)
+                    print("ERROR - too many attempts. Sleeping for: ", sleepTime)
+                    plaintextResponse, user, authenticated = messageType(decryptedMsg, authenticated, user)
+                    #plaintextResponse = error_message("Too many attempts.")
                 else:
                     plaintextResponse, user, authenticated = messageType(decryptedMsg, authenticated, user)
             else:
@@ -298,12 +316,17 @@ def connection_thread(c, addr):
             print("Connection with client has been closed")
             break
     c.close()
+    lock.acquire()
+    IPtoConnections[remote] -= 1
+    lock.release()
+    print("total connections: ", IPtoConnections)
     print("returning out of thread")
     return 0
 
 def main():
     global serverPublicKey
     global serverSecretKey
+    global IPtoConnections
     print("RUNNING")
     readDatabase()
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -320,12 +343,20 @@ def main():
         try:
             print("waiting")
             c, addr = s.accept()
+            address = addr[0]
+            lock.acquire()
+            if address in IPtoConnections.keys():
+                IPtoConnections[address] += 1
+            else:
+                IPtoConnections[address] = 1
+            lock.release()
             print("Spawning thread")
             t = threading.Thread(target=connection_thread, args=(c, addr))
             t.start()
         except socket.timeout:
             break
     s.close()
+    print("total connections: ", IPtoConnections)
     return 0
 
 main()
