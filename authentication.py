@@ -229,7 +229,7 @@ def connection_thread(c, addr):
     read.ParseFromString(msg)
     print(read)
     end = False
-    attempts = False
+    attempts = 0
     authenticated = False
     user = ""
 
@@ -290,7 +290,9 @@ def connection_thread(c, addr):
                 openConnections = IPtoConnections[remote]
                 lock.release()
                 attempts += 1
-                if attempts > 5:
+                if attempts > 40:
+                    plaintextResponse = error_message("Too many attempts on this connection")
+                elif attempts > 5:
                     sleepTime = openConnections
                     time.sleep(sleepTime)
                     print("ERROR - too many attempts. Sleeping for: ", sleepTime)
@@ -302,7 +304,6 @@ def connection_thread(c, addr):
                 plaintextResponse, user, authenticated = messageType(decryptedMsg, authenticated, user)
             print("PLAINTEXT RESPONSE\n", plaintextResponse)
             print("AUTHENTICATED\n", authenticated, "  ", user)
-            # TODO encrypted or unencrypted?
             response = encryptMessage(plaintextResponse, keys)
         else:
             print("wrong message type set")
