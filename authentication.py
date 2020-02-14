@@ -291,8 +291,9 @@ def connection_thread(c, addr):
                 attempts += 1
                 if attempts > 40:
                     plaintextResponse = error_message("Too many attempts on this connection")
+                    IPtoPreauth[remote] -= 1
                 elif attempts > 5:
-                    sleepTime = openConnections
+                    sleepTime = abs(openConnections)
                     time.sleep(sleepTime)
                     print("ERROR - too many attempts. Sleeping for: ", sleepTime)
                     plaintextResponse, user, authenticated = messageType(decryptedMsg, authenticated, user, remote)
