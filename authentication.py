@@ -97,9 +97,6 @@ def authorization_request(msg, authenticated):
     username = msg.auth_request.username
     password = msg.auth_request.password
 
-    print(username)
-    print(password)
-
     if authenticated:
         return error_message("A user has already been authenticated"), username, authenticated
     elif username not in usersToPasswords.keys():
@@ -299,7 +296,10 @@ def connection_thread(c, addr):
                 else:
                     plaintextResponse, user, authenticated = messageType(decryptedMsg, authenticated, user)
             else:
-                plaintextResponse, user, authenticated = messageType(decryptedMsg, authenticated, user)
+                if authenticated:
+                    plaintextResponse, user, authenticated = messageType(decryptedMsg, authenticated, user)
+                else:
+                    plaintextResponse = error_message("Must be authenticated first")
             print("PLAINTEXT RESPONSE\n", plaintextResponse)
             print("AUTHENTICATED\n", authenticated, "  ", user)
             response = encryptMessage(plaintextResponse, keys)
