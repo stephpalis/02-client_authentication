@@ -333,7 +333,7 @@ def main():
     host = '0.0.0.0'
     s.bind((host, port))
     s.listen(5)
-    s.settimeout(10)
+    #s.settimeout(10)
     
     serverSecretKey = PrivateKey.generate()
     serverPublicKey = serverSecretKey.public_key
@@ -353,6 +353,7 @@ def main():
             t = threading.Thread(target=connection_thread, args=(c, addr))
             t.start()
         except socket.timeout:
+            print("TIMEOUT")
             break
     s.close()
     print("total connections: ", IPtoConnections)
