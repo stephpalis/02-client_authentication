@@ -107,7 +107,9 @@ def authorization_request(msg, authenticated, c):
         result = comparePasswords(password, storedPassword)
         if result:
             authenticated = True
+            lock.acquire()
             IPtoPreauth[c] -= 1
+            lock.release()
         return authentication_response(result, username, authenticated)
 
 def store_response(hashedValue):
@@ -316,9 +318,6 @@ def connection_thread(c, addr):
             print("Connection with client has been closed")
             break
     c.close()
-    lock.acquire()
-    #IPtoPreauth[remote] -= 1
-    lock.release()
     print("total connections: ", IPtoPreauth)
     print("returning out of thread ", addr[0])
     return 0
