@@ -45,7 +45,7 @@ def sendServerHello(msg):
     response.server_hello.major_version = 3
     response.server_hello.minor_version = 1
     response.server_hello.user_agent = "hello client"
-    response.server_hello.public_key = bytes(serverPublicKey) #serverPublicKey.encode()
+    response.server_hello.public_key = bytes(serverPublicKey)
     return response
 
 def decryptMessage(msg, keys):
@@ -292,7 +292,6 @@ def connection_thread(c, addr):
                     time.sleep(sleepTime)
                     print("ERROR - too many attempts. Sleeping for: ", sleepTime)
                     plaintextResponse, user, authenticated = messageType(decryptedMsg, authenticated, user)
-                    #plaintextResponse = error_message("Too many attempts.")
                 else:
                     plaintextResponse, user, authenticated = messageType(decryptedMsg, authenticated, user)
             else:
