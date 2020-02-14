@@ -128,7 +128,6 @@ def store_request(msg, user):
     if public:
         publicKeyValue[key] = value
     else:
-        # TODO if it is not public
         if user in privateKeyValue.keys():
             privateKeyValue[user][key] = value
         else:
@@ -200,6 +199,7 @@ def messageType(msg, authenticated, user):
         return store_request(msg, user), user, authenticated
 
 def recv_all(s,n):
+    #TODO connectionreseterror??
     xs = b""
     while len(xs) < n:
         x = s.recv(n-len(xs))
@@ -284,8 +284,6 @@ def connection_thread(c, addr):
             if decryptedMsg.HasField("error_message"):
                 plaintextResponse = decryptedMsg
             elif decryptedMsg.HasField("auth_request"):
-                # TODO should this be cleared?
-                #TODO upper bound limit
                 lock.acquire()
                 openConnections = IPtoConnections[remote]
                 lock.release()
@@ -321,7 +319,7 @@ def connection_thread(c, addr):
     IPtoConnections[remote] -= 1
     lock.release()
     print("total connections: ", IPtoConnections)
-    print("returning out of thread")
+    print("returning out of thread ", addr[0])
     return 0
 
 def main():
