@@ -20,7 +20,7 @@ usersToPasswords = {}
 publicKeyValue = {}
 privateKeyValue = {}
 lock = threading.Lock()
-IPtoConnections = {}
+IPtoPreauth = {}
 
 def readDatabase():
     global usersToPasswords
@@ -93,7 +93,8 @@ def comparePasswords(password, stored):
         print("ARGON")
         return argon2.verify(password, stored)
 
-def authorization_request(msg, authenticated):
+def authorization_request(msg, authenticated, c):
+    global IPtoPreauth
     username = msg.auth_request.username
     password = msg.auth_request.password
 
@@ -106,6 +107,7 @@ def authorization_request(msg, authenticated):
         result = comparePasswords(password, storedPassword)
         if result:
             authenticated = True
+            IPtoPreauth[c] -= 1
         return authentication_response(result, username, authenticated)
 
 def store_response(hashedValue):
@@ -185,9 +187,9 @@ def ping_request(msg):
         return error_message("Invalid hash algorithm")
     return ping_response(hashed)
 
-def messageType(msg, authenticated, user):
+def messageType(msg, authenticated, user, c):
     if msg.HasField("auth_request"):
-        return authorization_request(msg, authenticated)
+        return authorization_request(msg, authenticated, c)
     elif msg.HasField("ping_request"):
         return ping_request(msg), user, authenticated
     elif msg.HasField("load_request"):
@@ -208,7 +210,7 @@ def recv_all(s,n):
 def connection_thread(c, addr):
     global serverPublicKey
     global serverSecretKey
-    global IPtoConnections
+    global IPtoPreauth
     print("REMOTE: ", addr[0])
     
     remote = addr[0]
@@ -217,7 +219,7 @@ def connection_thread(c, addr):
     if len(lengthInBytes) == 0:
         c.close()
         lock.acquire()
-        IPtoConnections[remote] -= 1
+        IPtoPreauth[remote] -= 1
         lock.release()
         return 0
     length = struct.unpack("!H", lengthInBytes)[0]
@@ -238,7 +240,7 @@ def connection_thread(c, addr):
             sentLen = struct.pack("!H", len(sentMsg))
             c.sendall(sentLen + sentMsg)
             lock.acquire()
-            IPtoConnections[remote] -= 1
+            IPtoPreauth[remote] -= 1
             lock.release()
             c.close()
             return 0
@@ -258,7 +260,7 @@ def connection_thread(c, addr):
     c.sendall(sentLen + sentMsg)
     if end:
         lock.acquire()
-        IPtoConnections[remote] -= 1
+        IPtoPreauth[remote] -= 1
         lock.release()
         c.close()
         return 0
@@ -282,7 +284,7 @@ def connection_thread(c, addr):
                 plaintextResponse = decryptedMsg
             elif decryptedMsg.HasField("auth_request"):
                 lock.acquire()
-                openConnections = IPtoConnections[remote]
+                openConnections = IPtoPreauth[remote]
                 lock.release()
                 attempts += 1
                 if attempts > 40:
@@ -291,12 +293,12 @@ def connection_thread(c, addr):
                     sleepTime = openConnections
                     time.sleep(sleepTime)
                     print("ERROR - too many attempts. Sleeping for: ", sleepTime)
-                    plaintextResponse, user, authenticated = messageType(decryptedMsg, authenticated, user)
+                    plaintextResponse, user, authenticated = messageType(decryptedMsg, authenticated, user, remote)
                 else:
-                    plaintextResponse, user, authenticated = messageType(decryptedMsg, authenticated, user)
+                    plaintextResponse, user, authenticated = messageType(decryptedMsg, authenticated, user, remote)
             else:
                 if authenticated:
-                    plaintextResponse, user, authenticated = messageType(decryptedMsg, authenticated, user)
+                    plaintextResponse, user, authenticated = messageType(decryptedMsg, authenticated, user, remote)
                 else:
                     plaintextResponse = error_message("Must be authenticated first")
             print("PLAINTEXT RESPONSE\n", plaintextResponse)
@@ -315,16 +317,16 @@ def connection_thread(c, addr):
             break
     c.close()
     lock.acquire()
-    IPtoConnections[remote] -= 1
+    #IPtoPreauth[remote] -= 1
     lock.release()
-    print("total connections: ", IPtoConnections)
+    print("total connections: ", IPtoPreauth)
     print("returning out of thread ", addr[0])
     return 0
 
 def main():
     global serverPublicKey
     global serverSecretKey
-    global IPtoConnections
+    global IPtoPreauth
     print("RUNNING")
     readDatabase()
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -343,10 +345,10 @@ def main():
             c, addr = s.accept()
             address = addr[0]
             lock.acquire()
-            if address in IPtoConnections.keys():
-                IPtoConnections[address] += 1
+            if address in IPtoPreauth.keys():
+                IPtoPreauth[address] += 1
             else:
-                IPtoConnections[address] = 1
+                IPtoPreauth[address] = 1
             lock.release()
             print("Spawning thread")
             t = threading.Thread(target=connection_thread, args=(c, addr))
@@ -355,7 +357,7 @@ def main():
             print("TIMEOUT")
             break
     s.close()
-    print("total connections: ", IPtoConnections)
+    print("total connections: ", IPtoPreauth)
     return 0
 
 main()
